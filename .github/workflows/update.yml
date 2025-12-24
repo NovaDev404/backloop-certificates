@@ -2,7 +2,7 @@ name: Build & Publish Backloop Certs
 
 on:
   schedule:
-    - cron: '0 0 */5 * *'
+    - cron: '0 0 */5 * *' # every 5 days
   workflow_dispatch:
 
 permissions:
@@ -38,47 +38,53 @@ jobs:
         run: |
           set -e
 
-          # List of base filenames
-          FILES="backloop.dev-key backloop.dev-cert backloop.dev-ca backloop.dev-bundle backloop.dev-fullchain backloop.dev-all backloop.dev.p12 backloop.dev.pfx backloop.dev-cert.der backloop.dev.cer backloop.dev.jks"
-
-          # Prepare directories for each file
-          for f in $FILES; do
-            mkdir -p "$f"
-          done
+          # Prepare directories
+          mkdir -p backloop.dev-key
+          mkdir -p backloop.dev-cert
+          mkdir -p backloop.dev-ca
+          mkdir -p backloop.dev-bundle
+          mkdir -p backloop.dev-fullchain
+          mkdir -p backloop.dev-all
+          mkdir -p backloop.dev.p12
+          mkdir -p backloop.dev.pfx
+          mkdir -p backloop.dev-cert.der
+          mkdir -p backloop.dev.cer
+          mkdir -p backloop.dev.jks
 
           # Combine key parts
-          cat tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem > "backloop.dev-key/backloop.dev-key.pem"
+          cat tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem > backloop.dev-key/backloop.dev-key.part1
+          cp tmp/backloop.dev-key.part2.pem backloop.dev-key/backloop.dev-key.part2
 
           # Copy certificate files into their folders
-          cp tmp/backloop.dev-cert.crt "backloop.dev-cert/backloop.dev-cert.crt"
-          cp tmp/backloop.dev-ca.crt "backloop.dev-ca/backloop.dev-ca.crt"
-          cp tmp/backloop.dev-bundle.crt "backloop.dev-bundle/backloop.dev-bundle.crt"
+          cp tmp/backloop.dev-cert.crt backloop.dev-cert/backloop.dev-cert.crt
+          cp tmp/backloop.dev-ca.crt backloop.dev-ca/backloop.dev-ca.crt
+          cp tmp/backloop.dev-bundle.crt backloop.dev-bundle/backloop.dev-bundle.crt
 
           # Fullchain: cert + CA
-          cat "backloop.dev-cert/backloop.dev-cert.crt" "backloop.dev-ca/backloop.dev-ca.crt" > "backloop.dev-fullchain/backloop.dev-fullchain.pem"
+          cat backloop.dev-cert/backloop.dev-cert.crt backloop.dev-ca/backloop.dev-ca.crt > backloop.dev-fullchain/backloop.dev-fullchain.pem
 
           # All.pem: key + cert + CA
-          cat "backloop.dev-key/backloop.dev-key.pem" "backloop.dev-cert/backloop.dev-cert.crt" "backloop.dev-ca/backloop.dev-ca.crt" > "backloop.dev-all/backloop.dev-all.pem"
+          cat backloop.dev-key/backloop.dev-key.part1 backloop.dev-key/backloop.dev-key.part2 backloop.dev-cert/backloop.dev-cert.crt backloop.dev-ca/backloop.dev-ca.crt > backloop.dev-all/backloop.dev-all.pem
 
           # Build P12/PFX
           openssl pkcs12 -export \
-            -inkey "backloop.dev-key/backloop.dev-key.pem" \
-            -in "backloop.dev-cert/backloop.dev-cert.crt" \
-            -certfile "backloop.dev-ca/backloop.dev-ca.crt" \
-            -out "backloop.dev.p12/backloop.dev.p12" \
+            -inkey <(cat backloop.dev-key/backloop.dev-key.part1 backloop.dev-key/backloop.dev-key.part2) \
+            -in backloop.dev-cert/backloop.dev-cert.crt \
+            -certfile backloop.dev-ca/backloop.dev-ca.crt \
+            -out backloop.dev.p12/backloop.dev.p12 \
             -passout pass:backloop.dev
-          cp "backloop.dev.p12/backloop.dev.p12" "backloop.dev.pfx/backloop.dev.pfx"
+          cp backloop.dev.p12/backloop.dev.p12 backloop.dev.pfx/backloop.dev.pfx
 
           # Build DER/CER
-          openssl x509 -in "backloop.dev-cert/backloop.dev-cert.crt" -outform DER -out "backloop.dev-cert.der/backloop.dev-cert.der"
-          cp "backloop.dev-cert.der/backloop.dev-cert.der" "backloop.dev.cer/backloop.dev.cer"
+          openssl x509 -in backloop.dev-cert/backloop.dev-cert.crt -outform DER -out backloop.dev-cert.der/backloop.dev-cert.der
+          cp backloop.dev-cert.der/backloop.dev-cert.der backloop.dev.cer/backloop.dev.cer
 
           # Build JKS
           keytool -importkeystore \
-            -srckeystore "backloop.dev.p12/backloop.dev.p12" \
+            -srckeystore backloop.dev.p12/backloop.dev.p12 \
             -srcstoretype PKCS12 \
             -srcstorepass backloop.dev \
-            -destkeystore "backloop.dev.jks/backloop.dev.jks" \
+            -destkeystore backloop.dev.jks/backloop.dev.jks \
             -deststoretype JKS \
             -deststorepass backloop.dev \
             -noprompt
@@ -113,4 +119,4 @@ jobs:
             backloop.dev.pfx/
             backloop.dev-cert.der/
             backloop.dev.cer/
-            backloop.dev.jks
+            backloop.dev.jks/
