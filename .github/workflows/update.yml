@@ -1,0 +1,148 @@
+name: Build & Publish Backloop Certs
+
+on:
+  schedule:
+    - cron: '0 0 */5 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Prepare workspace
+        run: |
+          set -e
+          mkdir -p tmp
+
+      - name: Download backloop.dev files from gh-pages
+        run: |
+          set -e
+          # raw URLs from perki/backloop.dev (gh-pages)
+          curl -fsSL -o tmp/backloop.dev-key.part1.pem https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-key.part1.pem
+          curl -fsSL -o tmp/backloop.dev-key.part2.pem https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-key.part2.pem
+          curl -fsSL -o tmp/backloop.dev-cert.crt       https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-cert.crt
+          curl -fsSL -o tmp/backloop.dev-ca.crt         https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-ca.crt
+          # bundle is present upstream; download it too (we'll copy into root)
+          curl -fsSL -o tmp/backloop.dev-bundle.crt     https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-bundle.crt
+
+      - name: Build PEM / combined files
+        run: |
+          set -e
+          # combine key parts
+          cat tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem > backloop.dev-key.pem
+          chmod 600 backloop.dev-key.pem
+
+          # copy cert and ca up to repo root
+          cp tmp/backloop.dev-cert.crt backloop.dev-cert.crt
+          cp tmp/backloop.dev-ca.crt backloop.dev-ca.crt
+
+          # fullchain: cert + CA (server first, then intermediate/root)
+          cat backloop.dev-cert.crt backloop.dev-ca.crt > backloop.dev-fullchain.pem
+
+          # bundle: use upstream bundle if present (copy)
+          cp tmp/backloop.dev-bundle.crt backloop.dev-bundle.crt || true
+
+          # all.pem: key + cert + CA
+          cat backloop.dev-key.pem backloop.dev-cert.crt backloop.dev-ca.crt > backloop.dev-all.pem
+
+      - name: Build P12 / PFX (PKCS#12)
+        run: |
+          set -e
+          # create PKCS#12 (p12)
+          openssl pkcs12 -export \
+            -inkey backloop.dev-key.pem \
+            -in backloop.dev-cert.crt \
+            -certfile backloop.dev-ca.crt \
+            -out backloop.dev.p12 \
+            -passout pass:backloop.dev
+
+          # create PFX (same as p12, but extension .pfx)
+          cp backloop.dev.p12 backloop.dev.pfx
+
+      - name: Build DER & CER
+        run: |
+          set -e
+          # DER (binary)
+          openssl x509 -in backloop.dev-cert.crt -outform DER -out backloop.dev-cert.der
+
+          # .cer (DER). Many windows tools accept .cer as DER.
+          cp backloop.dev-cert.der backloop.dev.cer
+
+      - name: Build Java Keystore (JKS)
+        run: |
+          set -e
+          # Import PKCS12 into a JKS keystore (password: backloop.dev)
+          keytool -importkeystore \
+            -srckeystore backloop.dev.p12 \
+            -srcstoretype PKCS12 \
+            -srcstorepass backloop.dev \
+            -destkeystore backloop.dev.jks \
+            -deststoretype JKS \
+            -deststorepass backloop.dev \
+            -noprompt
+
+      - name: Ensure listing + set file perms
+        run: |
+          set -e
+          # list outputs for logs
+          ls -la backloop.dev-*.*
+          ls -la *.p12 *.pfx *.jks || true
+
+      - name: Commit & push generated files to main
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          set -e
+          git config user.name "${GIT_AUTHOR_NAME}"
+          git config user.email "${GIT_AUTHOR_EMAIL}"
+
+          # Add all generated files (be careful: this adds these specific files only)
+          git add \
+            backloop.dev-key.pem \
+            backloop.dev-cert.crt \
+            backloop.dev-ca.crt \
+            backloop.dev-fullchain.pem \
+            backloop.dev-bundle.crt \
+            backloop.dev-all.pem \
+            backloop.dev.p12 \
+            backloop.dev.pfx \
+            backloop.dev-cert.der \
+            backloop.dev.cer \
+            backloop.dev.jks \
+
+          # Only commit if there are changes
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(certs): build & publish all backloop.dev cert formats"
+            git push origin HEAD:main
+          fi
+
+      - name: Upload artifacts (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: backloop-dev-certs
+          path: |
+            backloop.dev-key.pem
+            backloop.dev-cert.crt
+            backloop.dev-ca.crt
+            backloop.dev-fullchain.pem
+            backloop.dev-bundle.crt
+            backloop.dev-all.pem
+            backloop.dev.p12
+            backloop.dev.pfx
+            backloop.dev-cert.der
+            backloop.dev.cer
+            backloop.dev.jks
