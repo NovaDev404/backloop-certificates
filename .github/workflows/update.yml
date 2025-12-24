@@ -32,13 +32,13 @@ jobs:
           curl -fsSL -o tmp/backloop.dev-key.part2.pem https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-key.part2.pem
           curl -fsSL -o tmp/backloop.dev-cert.crt       https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-cert.crt
           curl -fsSL -o tmp/backloop.dev-ca.crt         https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-ca.crt
-          curl -fsSL -o tmp/backloop.dev-bundle.crt     https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-bundle.crt
+          curl -fsSL -o tmp/backloop.dev-bundle.crt     https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-bundle.crt || true
 
-      - name: Build directories & files
+      - name: Build combined artifacts in tmp and create outputs as split parts
         run: |
           set -e
 
-          # create target directories
+          # --- setup target dirs (each file will have its own folder) ---
           mkdir -p backloop.dev-key
           mkdir -p backloop.dev-cert
           mkdir -p backloop.dev-ca
@@ -51,49 +51,90 @@ jobs:
           mkdir -p backloop.dev.cer
           mkdir -p backloop.dev.jks
 
-          # place key parts
-          cp tmp/backloop.dev-key.part1.pem backloop.dev-key/backloop.dev-key.part1.pem
-          cp tmp/backloop.dev-key.part2.pem backloop.dev-key/backloop.dev-key.part2.pem
+          # --- create combined files in tmp (these will NOT be committed) ---
+          # combine key parts to a full key for building artifacts
+          cat tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem > tmp/backloop.dev-key.pem
+          chmod 600 tmp/backloop.dev-key.pem
 
-          # produce full key (concatenate parts) and secure it
-          cat backloop.dev-key/backloop.dev-key.part1.pem backloop.dev-key/backloop.dev-key.part2.pem > backloop.dev-key/backloop.dev-key.pem
-          chmod 600 backloop.dev-key/backloop.dev-key.pem
+          # copy cert & ca into tmp (already downloaded)
+          cp tmp/backloop.dev-cert.crt tmp/backloop.dev-ca.crt tmp/ 2>/dev/null || true
+          cp tmp/backloop.dev-bundle.crt tmp/ 2>/dev/null || true
 
-          # copy cert and ca into their folders
-          cp tmp/backloop.dev-cert.crt backloop.dev-cert/backloop.dev-cert.crt
-          cp tmp/backloop.dev-ca.crt backloop.dev-ca/backloop.dev-ca.crt
-          cp tmp/backloop.dev-bundle.crt backloop.dev-bundle/backloop.dev-bundle.crt || true
+          # fullchain (cert + CA)
+          cat tmp/backloop.dev-cert.crt tmp/backloop.dev-ca.crt > tmp/backloop.dev-fullchain.pem
 
-          # fullchain (server cert then CA)
-          cat backloop.dev-cert/backloop.dev-cert.crt backloop.dev-ca/backloop.dev-ca.crt > backloop.dev-fullchain/backloop.dev-fullchain.pem
+          # all (key + cert + CA)
+          cat tmp/backloop.dev-key.pem tmp/backloop.dev-cert.crt tmp/backloop.dev-ca.crt > tmp/backloop.dev-all.pem
 
-          # all.pem (key + cert + CA)
-          cat backloop.dev-key/backloop.dev-key.pem backloop.dev-cert/backloop.dev-cert.crt backloop.dev-ca/backloop.dev-ca.crt > backloop.dev-all/backloop.dev-all.pem
+          # Build PKCS#12 (p12) and copy to pfx (temporary in tmp)
+          openssl pkcs12 -export -inkey tmp/backloop.dev-key.pem -in tmp/backloop.dev-cert.crt -certfile tmp/backloop.dev-ca.crt -out tmp/backloop.dev.p12 -passout pass:backloop.dev
 
-          # create PKCS#12 (p12) and copy to .pfx
-          openssl pkcs12 -export -inkey backloop.dev-key/backloop.dev-key.pem -in backloop.dev-cert/backloop.dev-cert.crt -certfile backloop.dev-ca/backloop.dev-ca.crt -out backloop.dev.p12/backloop.dev.p12 -passout pass:backloop.dev
-          cp backloop.dev.p12/backloop.dev.p12 backloop.dev.pfx/backloop.dev.pfx
+          # DER and CER from cert
+          openssl x509 -in tmp/backloop.dev-cert.crt -outform DER -out tmp/backloop.dev-cert.der
 
-          # DER and CER
-          openssl x509 -in backloop.dev-cert/backloop.dev-cert.crt -outform DER -out backloop.dev-cert.der/backloop.dev-cert.der
-          cp backloop.dev-cert.der/backloop.dev-cert.der backloop.dev.cer/backloop.dev.cer
+          # JKS: import from PKCS12
+          keytool -importkeystore -srckeystore tmp/backloop.dev.p12 -srcstoretype PKCS12 -srcstorepass backloop.dev -destkeystore tmp/backloop.dev.jks -deststoretype JKS -deststorepass backloop.dev -noprompt
 
-          # JKS import from PKCS12
-          keytool -importkeystore -srckeystore backloop.dev.p12/backloop.dev.p12 -srcstoretype PKCS12 -srcstorepass backloop.dev -destkeystore backloop.dev.jks/backloop.dev.jks -deststoretype JKS -deststorepass backloop.dev -noprompt
+          # --- now split each tmp artifact into two parts and move into their tree ---
+          # Helper function (bash): split into 2 numeric parts, rename and move
+          split_into_two() {
+            src="$1"
+            destdir="$2"
+            basename="$3"
+            # use split to create two chunks named tmpchunk1 and tmpchunk2
+            split -n 2 --numeric-suffixes=1 --suffix-length=1 "$src" "$src.split."
+            # move/rename to desired part filenames
+            mv "${src}.split.1" "${destdir}/${basename}.part1"
+            mv "${src}.split.2" "${destdir}/${basename}.part2"
+          }
 
-          # list artifacts for logs (helpful to debug)
-          ls -la backloop.dev-key
-          ls -la backloop.dev-cert
-          ls -la backloop.dev-ca
-          ls -la backloop.dev-fullchain
-          ls -la backloop.dev-all
-          ls -la backloop.dev.p12
-          ls -la backloop.dev.pfx
-          ls -la backloop.dev-cert.der
-          ls -la backloop.dev.cer
-          ls -la backloop.dev.jks
+          # split the key parts that came from upstream (we already have upstream part files in tmp)
+          # Copy upstream parts into target folder with requested names
+          cp tmp/backloop.dev-key.part1.pem backloop.dev-key/backloop.dev-key.part1
+          cp tmp/backloop.dev-key.part2.pem backloop.dev-key/backloop.dev-key.part2
 
-      - name: Commit & push generated files
+          # For the other pieces, split the tmp combined artifacts into two halves:
+          split_into_two tmp/backloop.dev-cert.crt backloop.dev-cert backloop.dev-cert
+          split_into_two tmp/backloop.dev-ca.crt backloop.dev-ca backloop.dev-ca
+          # bundle may not exist; only split if present
+          if [ -f tmp/backloop.dev-bundle.crt ]; then
+            split_into_two tmp/backloop.dev-bundle.crt backloop.dev-bundle backloop.dev-bundle
+          fi
+
+          split_into_two tmp/backloop.dev-fullchain.pem backloop.dev-fullchain backloop.dev-fullchain
+          split_into_two tmp/backloop.dev-all.pem backloop.dev-all backloop.dev-all
+          split_into_two tmp/backloop.dev.p12 backloop.dev.p12 backloop.dev.p12
+          # pfx is same as p12 (split the tmp p12 into pfx folder also)
+          split_into_two tmp/backloop.dev.p12 backloop.dev.pfx backloop.dev.pfx
+          split_into_two tmp/backloop.dev-cert.der backloop.dev-cert.der backloop.dev-cert.der
+          split_into_two tmp/backloop.dev-cert.der backloop.dev.cer backloop.dev.cer
+          split_into_two tmp/backloop.dev.jks backloop.dev.jks backloop.dev.jks
+
+          # --- secure cleanup: remove tmp combined originals so nothing combined gets committed ---
+          rm -f tmp/backloop.dev-key.pem
+          rm -f tmp/backloop.dev-fullchain.pem
+          rm -f tmp/backloop.dev-all.pem
+          rm -f tmp/backloop.dev.p12
+          rm -f tmp/backloop.dev-cert.der
+          rm -f tmp/backloop.dev.jks
+          # leave the original upstream part files in tmp only if you want; remove them to be safe
+          rm -f tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem tmp/backloop.dev-cert.crt tmp/backloop.dev-ca.crt tmp/backloop.dev-bundle.crt || true
+
+          # list what we'll commit (for logs)
+          echo "====== Files to commit (folders with .part1/.part2) ======"
+          ls -la backloop.dev-key || true
+          ls -la backloop.dev-cert || true
+          ls -la backloop.dev-ca || true
+          ls -la backloop.dev-bundle || true
+          ls -la backloop.dev-fullchain || true
+          ls -la backloop.dev-all || true
+          ls -la backloop.dev.p12 || true
+          ls -la backloop.dev.pfx || true
+          ls -la backloop.dev-cert.der || true
+          ls -la backloop.dev.cer || true
+          ls -la backloop.dev.jks || true
+
+      - name: Commit & push generated part files
         env:
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
@@ -101,18 +142,19 @@ jobs:
           set -e
           git config user.name "${GIT_AUTHOR_NAME}"
           git config user.email "${GIT_AUTHOR_EMAIL}"
-          git add .
+          # Add only the folders we created (avoid accidentally adding tmp/)
+          git add backloop.dev-key backloop.dev-cert backloop.dev-ca backloop.dev-bundle backloop.dev-fullchain backloop.dev-all backloop.dev.p12 backloop.dev.pfx backloop.dev-cert.der backloop.dev.cer backloop.dev.jks || true
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "chore(certs): build & publish all certs in folders"
+            git commit -m "chore(certs): build & publish cert files as .part1/.part2 pairs"
             git push origin HEAD:main
           fi
 
       - name: Upload artifacts (optional)
         uses: actions/upload-artifact@v4
         with:
-          name: backloop-dev-certs
+          name: backloop-dev-certs-parts
           path: |
             backloop.dev-key/
             backloop.dev-cert/
