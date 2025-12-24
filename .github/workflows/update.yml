@@ -34,60 +34,76 @@ jobs:
           curl -fsSL -o tmp/backloop.dev-ca.crt         https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-ca.crt
           curl -fsSL -o tmp/backloop.dev-bundle.crt     https://raw.githubusercontent.com/perki/backloop.dev/gh-pages/backloop.dev-bundle.crt || true
 
-      - name: Build artifacts and split into parts
+      - name: Build combined artifacts in tmp and create split parts in proper folders
         run: |
           set -e
 
-          # Helper function to split any file into two .part1/.part2 inside a folder named like the final file
-          split_into_parts() {
-            src="$1"
-            destfile="$2"  # e.g., backloop.dev-all.pem
-            mkdir -p "$destfile"
-            split -n 2 --numeric-suffixes=1 --suffix-length=1 "$src" "$destfile/$destfile.part"
-            mv "$destfile/$destfile.part1" "$destfile/$destfile.part1"
-            mv "$destfile/$destfile.part2" "$destfile/$destfile.part2"
-          }
+          # --- create target directories (one per final filename with extension) ---
+          mkdir -p backloop.dev-key.pem
+          mkdir -p backloop.dev-cert.crt
+          mkdir -p backloop.dev-ca.crt
+          mkdir -p backloop.dev-bundle.crt
+          mkdir -p backloop.dev-fullchain.pem
+          mkdir -p backloop.dev-all.pem
+          mkdir -p backloop.dev.p12
+          mkdir -p backloop.dev.pfx
+          mkdir -p backloop.dev-cert.der
+          mkdir -p backloop.dev.cer
+          mkdir -p backloop.dev.jks
 
-          # --- combine key parts temporarily to build artifacts ---
+          # --- create combined files in tmp (these will NEVER be committed) ---
           cat tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem > tmp/backloop.dev-key.pem
           chmod 600 tmp/backloop.dev-key.pem
 
-          # fullchain: cert + CA
+          cp tmp/backloop.dev-cert.crt tmp/backloop.dev-ca.crt tmp/ 2>/dev/null || true
+          cp tmp/backloop.dev-bundle.crt tmp/ 2>/dev/null || true
+
           cat tmp/backloop.dev-cert.crt tmp/backloop.dev-ca.crt > tmp/backloop.dev-fullchain.pem
 
-          # all.pem: key + cert + CA
           cat tmp/backloop.dev-key.pem tmp/backloop.dev-cert.crt tmp/backloop.dev-ca.crt > tmp/backloop.dev-all.pem
 
-          # P12 / PFX
           openssl pkcs12 -export -inkey tmp/backloop.dev-key.pem -in tmp/backloop.dev-cert.crt -certfile tmp/backloop.dev-ca.crt -out tmp/backloop.dev.p12 -passout pass:backloop.dev
-          cp tmp/backloop.dev.p12 tmp/backloop.dev.pfx
 
-          # DER / CER
           openssl x509 -in tmp/backloop.dev-cert.crt -outform DER -out tmp/backloop.dev-cert.der
-          cp tmp/backloop.dev-cert.der tmp/backloop.dev.cer
 
-          # JKS
           keytool -importkeystore -srckeystore tmp/backloop.dev.p12 -srcstoretype PKCS12 -srcstorepass backloop.dev -destkeystore tmp/backloop.dev.jks -deststoretype JKS -deststorepass backloop.dev -noprompt
 
-          # --- split all artifacts into part1/part2 in folders with same name as file ---
-          cp tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem ./backloop.dev-key.pem.part1-temp ./backloop.dev-key.pem.part2-temp
-          mkdir -p "backloop.dev-key.pem"
-          cp tmp/backloop.dev-key.part1.pem "backloop.dev-key.pem/backloop.dev-key.pem.part1"
-          cp tmp/backloop.dev-key.part2.pem "backloop.dev-key.pem/backloop.dev-key.pem.part2"
+          # --- helper to split a file into two equal parts ---
+          split_into_two() {
+            local src="$1"
+            local destdir="$2"
+            local basename="$3"
+            split -n 2 --numeric-suffixes=1 --suffix-length=1 "$src" "$src.split."
+            mv "${src}.split.1" "${destdir}/${basename}.part1"
+            mv "${src}.split.2" "${destdir}/${basename}.part2"
+          }
 
-          split_into_parts tmp/backloop.dev-cert.crt backloop.dev-cert.crt
-          split_into_parts tmp/backloop.dev-ca.crt backloop.dev-ca.crt
-          if [ -f tmp/backloop.dev-bundle.crt ]; then split_into_parts tmp/backloop.dev-bundle.crt backloop.dev-bundle.crt; fi
-          split_into_parts tmp/backloop.dev-fullchain.pem backloop.dev-fullchain.pem
-          split_into_parts tmp/backloop.dev-all.pem backloop.dev-all.pem
-          split_into_parts tmp/backloop.dev.p12 backloop.dev.p12
-          split_into_parts tmp/backloop.dev.pfx backloop.dev.pfx
-          split_into_parts tmp/backloop.dev-cert.der backloop.dev-cert.der
-          split_into_parts tmp/backloop.dev.cer backloop.dev.cer
-          split_into_parts tmp/backloop.dev.jks backloop.dev.jks
+          # --- split and place each artifact ---
+          # key: use the original upstream parts (already split)
+          cp tmp/backloop.dev-key.part1.pem backloop.dev-key.pem/backloop.dev-key.pem.part1
+          cp tmp/backloop.dev-key.part2.pem backloop.dev-key.pem/backloop.dev-key.pem.part2
 
-          # clean tmp completely
-          rm -rf tmp/*
+          split_into_two tmp/backloop.dev-cert.crt      backloop.dev-cert.crt      backloop.dev-cert.crt
+          split_into_two tmp/backloop.dev-ca.crt       backloop.dev-ca.crt        backloop.dev-ca.crt
+
+          if [ -f tmp/backloop.dev-bundle.crt ]; then
+            split_into_two tmp/backloop.dev-bundle.crt  backloop.dev-bundle.crt    backloop.dev-bundle.crt
+          fi
+
+          split_into_two tmp/backloop.dev-fullchain.pem backloop.dev-fullchain.pem backloop.dev-fullchain.pem
+          split_into_two tmp/backloop.dev-all.pem      backloop.dev-all.pem       backloop.dev-all.pem
+          split_into_two tmp/backloop.dev.p12          backloop.dev.p12           backloop.dev.p12
+          split_into_two tmp/backloop.dev.p12          backloop.dev.pfx           backloop.dev.pfx
+          split_into_two tmp/backloop.dev-cert.der     backloop.dev-cert.der      backloop.dev-cert.der
+          split_into_two tmp/backloop.dev-cert.der     backloop.dev.cer           backloop.dev.cer
+          split_into_two tmp/backloop.dev.jks          backloop.dev.jks           backloop.dev.jks
+
+          # --- thorough cleanup of tmp directory ---
+          rm -rf tmp/
+
+          # --- list final files for logs ---
+          echo "====== Final committed structure (folder/filename.part1 & .part2) ======"
+          find . -type f -name "*.part1" -o -name "*.part2" | sort
 
       - name: Commit & push generated part files
         env:
@@ -97,12 +113,27 @@ jobs:
           set -e
           git config user.name "${GIT_AUTHOR_NAME}"
           git config user.email "${GIT_AUTHOR_EMAIL}"
-          git add backloop.dev-key.pem backloop.dev-cert.crt backloop.dev-ca.crt backloop.dev-bundle.crt backloop.dev-fullchain.pem backloop.dev-all.pem backloop.dev.p12 backloop.dev.pfx backloop.dev-cert.der backloop.dev.cer backloop.dev.jks
+
+          # Add only the exact target folders
+          git add \
+            backloop.dev-key.pem \
+            backloop.dev-cert.crt \
+            backloop.dev-ca.crt \
+            backloop.dev-bundle.crt \
+            backloop.dev-fullchain.pem \
+            backloop.dev-all.pem \
+            backloop.dev.p12 \
+            backloop.dev.pfx \
+            backloop.dev-cert.der \
+            backloop.dev.cer \
+            backloop.dev.jks
+
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "chore(certs): build & publish all certs as .part1/.part2 in same-name folders"
+            git commit -m "chore(certs): rebuild and publish all cert artifacts as split part1/part2 pairs"
             git push origin HEAD:main
+          fi
 
       - name: Upload artifacts (optional)
         uses: actions/upload-artifact@v4
