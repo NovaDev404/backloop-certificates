@@ -35,7 +35,7 @@ All files are automatically generated weekly by a GitHub Actions workflow.
 
 ---
 
-## 📦 Files
+## 📦 List of All Files
 
 - `backloop.dev-key.pem` — Private key (PEM).  
 - `backloop.dev-cert.crt` — Server cert (PEM).  
