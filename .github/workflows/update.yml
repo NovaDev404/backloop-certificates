@@ -38,7 +38,7 @@ jobs:
         run: |
           set -e
 
-          # Prepare directories
+          # create target directories
           mkdir -p backloop.dev-key
           mkdir -p backloop.dev-cert
           mkdir -p backloop.dev-ca
@@ -51,43 +51,47 @@ jobs:
           mkdir -p backloop.dev.cer
           mkdir -p backloop.dev.jks
 
-          # Combine key parts
-          cat tmp/backloop.dev-key.part1.pem tmp/backloop.dev-key.part2.pem > backloop.dev-key/backloop.dev-key.part1
-          cp tmp/backloop.dev-key.part2.pem backloop.dev-key/backloop.dev-key.part2
+          # place key parts
+          cp tmp/backloop.dev-key.part1.pem backloop.dev-key/backloop.dev-key.part1.pem
+          cp tmp/backloop.dev-key.part2.pem backloop.dev-key/backloop.dev-key.part2.pem
 
-          # Copy certificate files into their folders
+          # produce full key (concatenate parts) and secure it
+          cat backloop.dev-key/backloop.dev-key.part1.pem backloop.dev-key/backloop.dev-key.part2.pem > backloop.dev-key/backloop.dev-key.pem
+          chmod 600 backloop.dev-key/backloop.dev-key.pem
+
+          # copy cert and ca into their folders
           cp tmp/backloop.dev-cert.crt backloop.dev-cert/backloop.dev-cert.crt
           cp tmp/backloop.dev-ca.crt backloop.dev-ca/backloop.dev-ca.crt
-          cp tmp/backloop.dev-bundle.crt backloop.dev-bundle/backloop.dev-bundle.crt
+          cp tmp/backloop.dev-bundle.crt backloop.dev-bundle/backloop.dev-bundle.crt || true
 
-          # Fullchain: cert + CA
+          # fullchain (server cert then CA)
           cat backloop.dev-cert/backloop.dev-cert.crt backloop.dev-ca/backloop.dev-ca.crt > backloop.dev-fullchain/backloop.dev-fullchain.pem
 
-          # All.pem: key + cert + CA
-          cat backloop.dev-key/backloop.dev-key.part1 backloop.dev-key/backloop.dev-key.part2 backloop.dev-cert/backloop.dev-cert.crt backloop.dev-ca/backloop.dev-ca.crt > backloop.dev-all/backloop.dev-all.pem
+          # all.pem (key + cert + CA)
+          cat backloop.dev-key/backloop.dev-key.pem backloop.dev-cert/backloop.dev-cert.crt backloop.dev-ca/backloop.dev-ca.crt > backloop.dev-all/backloop.dev-all.pem
 
-          # Build P12/PFX
-          openssl pkcs12 -export \
-            -inkey <(cat backloop.dev-key/backloop.dev-key.part1 backloop.dev-key/backloop.dev-key.part2) \
-            -in backloop.dev-cert/backloop.dev-cert.crt \
-            -certfile backloop.dev-ca/backloop.dev-ca.crt \
-            -out backloop.dev.p12/backloop.dev.p12 \
-            -passout pass:backloop.dev
+          # create PKCS#12 (p12) and copy to .pfx
+          openssl pkcs12 -export -inkey backloop.dev-key/backloop.dev-key.pem -in backloop.dev-cert/backloop.dev-cert.crt -certfile backloop.dev-ca/backloop.dev-ca.crt -out backloop.dev.p12/backloop.dev.p12 -passout pass:backloop.dev
           cp backloop.dev.p12/backloop.dev.p12 backloop.dev.pfx/backloop.dev.pfx
 
-          # Build DER/CER
+          # DER and CER
           openssl x509 -in backloop.dev-cert/backloop.dev-cert.crt -outform DER -out backloop.dev-cert.der/backloop.dev-cert.der
           cp backloop.dev-cert.der/backloop.dev-cert.der backloop.dev.cer/backloop.dev.cer
 
-          # Build JKS
-          keytool -importkeystore \
-            -srckeystore backloop.dev.p12/backloop.dev.p12 \
-            -srcstoretype PKCS12 \
-            -srcstorepass backloop.dev \
-            -destkeystore backloop.dev.jks/backloop.dev.jks \
-            -deststoretype JKS \
-            -deststorepass backloop.dev \
-            -noprompt
+          # JKS import from PKCS12
+          keytool -importkeystore -srckeystore backloop.dev.p12/backloop.dev.p12 -srcstoretype PKCS12 -srcstorepass backloop.dev -destkeystore backloop.dev.jks/backloop.dev.jks -deststoretype JKS -deststorepass backloop.dev -noprompt
+
+          # list artifacts for logs (helpful to debug)
+          ls -la backloop.dev-key
+          ls -la backloop.dev-cert
+          ls -la backloop.dev-ca
+          ls -la backloop.dev-fullchain
+          ls -la backloop.dev-all
+          ls -la backloop.dev.p12
+          ls -la backloop.dev.pfx
+          ls -la backloop.dev-cert.der
+          ls -la backloop.dev.cer
+          ls -la backloop.dev.jks
 
       - name: Commit & push generated files
         env:
@@ -103,6 +107,7 @@ jobs:
           else
             git commit -m "chore(certs): build & publish all certs in folders"
             git push origin HEAD:main
+          fi
 
       - name: Upload artifacts (optional)
         uses: actions/upload-artifact@v4
