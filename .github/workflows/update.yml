@@ -2,7 +2,7 @@ name: Build & Publish Backloop Certs
 
 on:
   schedule:
-    - cron: '0 0 */5 * *' # every 5 days
+    - cron: '0 0 */2 * *' # every 2 days
   workflow_dispatch:
 
 permissions:
