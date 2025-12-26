@@ -1,7 +1,7 @@
 # backloop.dev certificates
 
 This repository contains multiple SSL/TLS certificate and key files produced from [perki/backloop.dev](https://github.com/perki/backloop.dev).
-All files are automatically generated weekly by a GitHub Actions workflow.
+All files are automatically generated every two days by a GitHub Actions workflow.
 
 ---
 
