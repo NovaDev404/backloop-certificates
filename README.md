@@ -3,6 +3,8 @@
 This repository contains multiple SSL/TLS certificate and key files produced from [perki/backloop.dev](https://github.com/perki/backloop.dev).
 All files are automatically generated every two days by a GitHub Actions workflow.
 
+Download here: https://novadev.vip/resources/backloop/
+
 ---
 
 ## 🔑 Passwords
